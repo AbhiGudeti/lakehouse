@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+---
+# Lakehouse Architecture
+
+Production-style mini lakehouse in Rust using Apache Arrow and DataFusion.
+
+## Crate Structure
+- crates/core: Core types (errors, actions, schema, snapshot)
+- crates/storage: Storage trait + local FS backend
+- crates/log: Transaction log (reader, writer, checkpoint, Table)
+- crates/ingest: Streaming ingestion
+- crates/query: DataFusion integration
+- crates/compact: Compaction
+- crates/quality: Data quality validation
+- crates/bench: Benchmarks
+- crates/server: Web UI + observability
+
+## Key Principles
+1. JSON-lines log in _log/ directory, forward-compatible
+2. Snapshot isolation via log replay from checkpoint
+3. Optimistic concurrency with put-if-absent
+4. No global mutable state
+5. Typed errors with thiserror
