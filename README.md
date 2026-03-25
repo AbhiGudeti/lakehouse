@@ -8,3 +8,10 @@ A transactional Parquet-based mini lakehouse (Delta/Iceberg-inspired) with strea
 Install formatting + clippy:
 ```bash
 rustup component add rustfmt clippy
+```
+
+## How to build
+cargo build
+
+## How to run tests
+cargo test
