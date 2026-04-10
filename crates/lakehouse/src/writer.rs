@@ -46,7 +46,7 @@ mod tests {
         // Build a minimal schema: id (Int64), name (Utf8)
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new("name", DataType::Utf8, false), 
+            Field::new("name", DataType::Utf8, false),
         ]));
 
         let batch = RecordBatch::try_new(
@@ -68,9 +68,7 @@ mod tests {
             .build()
             .expect("reader");
 
-        let rows: usize = reader
-            .map(|b| b.expect("batch").num_rows())
-            .sum();
+        let rows: usize = reader.map(|b| b.expect("batch").num_rows()).sum();
 
         assert_eq!(rows, 3);
     }

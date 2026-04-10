@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{LOG_DIR, format_log_version};
+use crate::layout::{format_log_version, LOG_DIR};
 
 /// Metadata recorded for every Parquet file added to the table.
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,8 +50,7 @@ pub fn commit(table_dir: &Path, version: u64, actions: &[Action]) -> anyhow::Res
         .with_context(|| format!("failed to create log file: {}", log_path.display()))?;
 
     for action in actions {
-        let line = serde_json::to_string(action)
-            .context("failed to serialize action")?;
+        let line = serde_json::to_string(action).context("failed to serialize action")?;
         writeln!(file, "{}", line).context("failed to write action line")?;
     }
 
@@ -82,8 +81,7 @@ mod tests {
         // Every line must be valid JSON and contain an "add" key
         let contents = fs::read_to_string(&log_path).expect("read log file");
         for line in contents.lines() {
-            let v: serde_json::Value =
-                serde_json::from_str(line).expect("line is not valid JSON");
+            let v: serde_json::Value = serde_json::from_str(line).expect("line is not valid JSON");
             assert!(v.get("add").is_some(), "expected 'add' key in: {}", line);
         }
     }

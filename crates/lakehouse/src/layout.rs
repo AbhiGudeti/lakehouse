@@ -15,6 +15,9 @@ mod tests {
     fn formats_log_version_as_20_digits() {
         assert_eq!(format_log_version(0), "00000000000000000000");
         assert_eq!(format_log_version(1), "00000000000000000001");
-        assert_eq!(format_log_version(10000000000000000000), "10000000000000000000");
+        assert_eq!(
+            format_log_version(10000000000000000000),
+            "10000000000000000000"
+        );
     }
 }

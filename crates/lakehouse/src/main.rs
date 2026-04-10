@@ -39,7 +39,11 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor => {
             println!("Ok");
         }
-        Commands::Write { table, input, version } => {
+        Commands::Write {
+            table,
+            input,
+            version,
+        } => {
             // 1. Load CSV → RecordBatch
             let batch = input::csv_to_batch(&input)?;
             let row_count = batch.num_rows() as u64;
