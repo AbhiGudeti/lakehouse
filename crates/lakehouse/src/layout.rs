@@ -1,6 +1,8 @@
 pub const DATA_DIR: &str = "data";
 pub const LOG_DIR: &str = "_log";
+#[allow(dead_code)]
 pub const CHECKPOINT_DIR: &str = "_checkpoints";
+#[allow(dead_code)]
 pub const TMPL_DIR: &str = "_tmpl";
 
 pub fn format_log_version(version: u64) -> String {

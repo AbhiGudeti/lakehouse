@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(cargo test:*)",
+      "Bash(printf 'id,name,score\\\\n1,alice,95\\\\n2,bob,87\\\\n3,carol,92\\\\n')",
+      "Bash(cargo run:*)",
+      "Read(//private/tmp/test_table/data/**)",
+      "Read(//tmp/test_table/**)",
+      "Read(//tmp/test_table/_log/**)",
+      "Bash(cargo clippy:*)"
+    ]
+  }
+}
