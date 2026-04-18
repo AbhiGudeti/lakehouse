@@ -1,6 +1,7 @@
 mod input;
 mod layout;
 mod log;
+mod snapshot;
 mod writer;
 
 use std::collections::HashMap;
@@ -27,9 +28,14 @@ enum Commands {
         /// Path to the CSV input file
         #[arg(long)]
         input: PathBuf,
-        /// Log version to commit this write as
+    },
+    Snapshot {
+        /// Path to the table directory
         #[arg(long)]
-        version: u64,
+        table: PathBuf,
+        /// Version to read; defaults to latest committed version
+        #[arg(long)]
+        version: Option<u64>,
     },
 }
 
@@ -39,11 +45,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor => {
             println!("Ok");
         }
-        Commands::Write {
-            table,
-            input,
-            version,
-        } => {
+        Commands::Write { table, input } => {
             // 1. Load CSV → RecordBatch
             let batch = input::csv_to_batch(&input)?;
             let row_count = batch.num_rows() as u64;
@@ -62,7 +64,10 @@ fn main() -> anyhow::Result<()> {
                 .to_string_lossy()
                 .into_owned();
 
-            // 4. Commit an AddFile action to the log
+            // 4. Determine version automatically — no more manual --version flag
+            let version = snapshot::next_version(&table)?;
+
+            // 5. Commit an AddFile action to the log
             let action = log::Action::Add(log::AddFile {
                 path: rel_path,
                 size,
@@ -72,11 +77,26 @@ fn main() -> anyhow::Result<()> {
             log::commit(&table, version, &[action])?;
 
             println!(
-                "wrote {} rows → {} (log version {})",
+                "wrote {} rows → {} (committed as version {})",
                 row_count,
                 abs_path.display(),
                 version
             );
+        }
+        Commands::Snapshot { table, version } => {
+            let ver = match version {
+                Some(v) => v,
+                None => snapshot::latest_version(&table)?
+                    .context("table has no committed versions yet")?,
+            };
+
+            let snap = snapshot::read(&table, ver)?;
+
+            println!("snapshot at version {}", snap.version);
+            println!("{} file(s):", snap.files.len());
+            for f in &snap.files {
+                println!("  {} ({} rows, {} bytes)", f.path, f.row_count, f.size);
+            }
         }
     }
     Ok(())

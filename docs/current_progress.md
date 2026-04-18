@@ -1,6 +1,6 @@
 # Lakehouse — Current Progress
 
-_Last updated: 2026-04-09_ (W1-4 complete)
+_Last updated: 2026-04-17_ (W1-5 complete)
 
 ---
 
@@ -36,17 +36,28 @@ _Last updated: 2026-04-09_ (W1-4 complete)
 - Two unit tests: (1) log file exists at correct path and every line parses as JSON with an `"add"` key; (2) metadata fields (`path`, `size`, `rowCount`) match what was committed
 - All 5 tests pass
 
+### W1-5: Snapshot reconstruction (replay log) ✅
+- `snapshot.rs`: `Snapshot` struct — holds `version: u64` and `files: Vec<AddFile>`; derived by replaying the log, never stored on disk
+- `snapshot.rs`: `read(table_dir, version)` — iterates versions `0..=version`, opens each `_log/<v>.json`, deserializes every NDJSON line as an `Action`, accumulates `AddFile` entries into `files`; errors explicitly on missing log files (no silent skip)
+- `snapshot.rs`: `latest_version(table_dir)` — reads `_log/` directory, parses filenames matching `<20 digits>.json`, returns the maximum version as `Option<u64>` (`None` if no commits exist yet)
+- `snapshot.rs`: `next_version(table_dir)` — wraps `latest_version`; returns `0` for an empty table, `N+1` otherwise
+- `main.rs`: `write` command drops `--version` flag; version now auto-derived from `next_version()` before every commit
+- `main.rs`: new `snapshot --table <path> [--version N]` subcommand — resolves to latest version if `--version` omitted, prints each active file's path, row count, and size
+- 4 unit tests: snapshot collects all AddFiles across versions; snapshot at version 0 excludes later files; `next_version` returns 0 for empty table; `next_version` increments after each commit
+- All 9 tests pass
+
 ---
 
 ## Current State of Files
 
 | File | Status | Notes |
 |------|--------|-------|
-| `src/main.rs` | Active | `doctor` and `write --table --input --version` wired |
+| `src/main.rs` | Active | `doctor`, `write --table --input`, `snapshot --table [--version]` wired |
 | `src/layout.rs` | Complete | Directory names + log version formatting |
 | `src/writer.rs` | Complete | Append-only Parquet writer with ULID naming + round-trip test |
 | `src/input.rs` | Complete | CSV → Arrow `RecordBatch` loader with schema inference |
 | `src/log.rs` | Complete | `AddFile`, `Action` enum, NDJSON `commit()` + 2 tests |
+| `src/snapshot.rs` | Complete | `read()`, `latest_version()`, `next_version()` + 4 tests |
 | `crates/lakehouse/Cargo.toml` | Active | `arrow`, `parquet`, `ulid`, `serde`, `serde_json` added |
 
 ---
@@ -55,7 +66,7 @@ _Last updated: 2026-04-09_ (W1-4 complete)
 
 | Week | Issues | Topics |
 |------|--------|--------|
-| W1 | W1-5, W1-6 | Snapshot replay, first DataFusion query | ← next
+| W1 | W1-6 | First DataFusion query | ← next
 | W2 | W2-1 → W2-4 | RemoveFile, atomic commit, CommitInfo, time travel |
 | W3 | W3-1 → W3-3 | Metadata action, schema evolution, checkpointing |
 | W4 | W4-1 → W4-3 | Redpanda Docker, streaming ingestor, query-while-ingesting demo |
