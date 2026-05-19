@@ -9,8 +9,8 @@ use arrow::record_batch::RecordBatch;
 
 /// Load a CSV file into a single `RecordBatch`.
 ///
-/// Schema is inferred from the first 100 rows (Arrow's default inference).
-/// All rows are collected into one batch — acceptable for W1-3 scale.
+/// Schema is inferred from the first 100 rows - default Arrow inference
+/// All rows are collected into one batch which is good enough for now, will have to improve for bigger scale later
 pub fn csv_to_batch(path: &Path) -> anyhow::Result<RecordBatch> {
     let file =
         fs::File::open(path).with_context(|| format!("failed to open CSV: {}", path.display()))?;

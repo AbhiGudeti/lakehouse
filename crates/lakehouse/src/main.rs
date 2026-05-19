@@ -1,6 +1,7 @@
 mod input;
 mod layout;
 mod log;
+mod query;
 mod snapshot;
 mod writer;
 
@@ -28,32 +29,78 @@ enum Commands {
         /// Path to the CSV input file
         #[arg(long)]
         input: PathBuf,
+        /// Optional idempotency token embedded in CommitInfo (W2-3)
+        #[arg(long)]
+        txn_id: Option<String>,
+        /// Optional application identifier embedded in CommitInfo (W2-3)
+        #[arg(long)]
+        app_id: Option<String>,
     },
     Snapshot {
         /// Path to the table directory
         #[arg(long)]
         table: PathBuf,
-        /// Version to read; defaults to latest committed version
+        /// Exact version to read; mutually exclusive with --timestamp
         #[arg(long)]
         version: Option<u64>,
+        /// RFC 3339 timestamp — resolves to the latest version committed at or before this time (W2-4)
+        #[arg(long)]
+        timestamp: Option<String>,
+    },
+    Sql {
+        /// Path to the table directory
+        #[arg(long)]
+        table: PathBuf,
+        /// Exact snapshot version to query; mutually exclusive with --timestamp
+        #[arg(long)]
+        version: Option<u64>,
+        /// RFC 3339 timestamp for time-travel queries (W2-4)
+        #[arg(long)]
+        timestamp: Option<String>,
+        /// SQL query string (table is always named "t")
+        #[arg(long)]
+        query: String,
+        /// Print the physical query plan instead of row data
+        #[arg(long, default_value_t = false)]
+        explain: bool,
     },
 }
 
-fn main() -> anyhow::Result<()> {
+/// Resolve a snapshot version from the (version, timestamp) flag pair.
+///
+/// Rules:
+/// - Both set         → error (ambiguous)
+/// - Only version     → use it directly
+/// - Only timestamp   → resolve via CommitInfo scan
+/// - Neither          → latest committed version
+fn resolve_version(
+    table: &std::path::Path,
+    version: Option<u64>,
+    timestamp: Option<&str>,
+) -> anyhow::Result<u64> {
+    match (version, timestamp) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--version and --timestamp are mutually exclusive; specify one or neither")
+        }
+        (Some(v), None) => Ok(v),
+        (None, Some(ts)) => snapshot::version_at_timestamp(table, ts),
+        (None, None) => snapshot::latest_version(table)?.context("table has no committed versions yet"),
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Doctor => {
             println!("Ok");
         }
-        Commands::Write { table, input } => {
-            // 1. Load CSV → RecordBatch
+        Commands::Write { table, input, txn_id, app_id } => {
             let batch = input::csv_to_batch(&input)?;
             let row_count = batch.num_rows() as u64;
 
-            // 2. Write Parquet file; returns absolute path
             let abs_path = writer::write_batch(&table, &batch)?;
 
-            // 3. Compute file size and relative path for the log entry
             let size = std::fs::metadata(&abs_path)
                 .with_context(|| format!("stat failed: {}", abs_path.display()))?
                 .len();
@@ -64,17 +111,25 @@ fn main() -> anyhow::Result<()> {
                 .to_string_lossy()
                 .into_owned();
 
-            // 4. Determine version automatically — no more manual --version flag
             let version = snapshot::next_version(&table)?;
 
-            // 5. Commit an AddFile action to the log
             let action = log::Action::Add(log::AddFile {
                 path: rel_path,
                 size,
                 row_count,
                 partition_values: HashMap::new(),
             });
-            log::commit(&table, version, &[action])?;
+
+            log::commit(
+                &table,
+                version,
+                &[action],
+                log::CommitOptions {
+                    operation: "write".to_string(),
+                    txn_id,
+                    app_id,
+                },
+            )?;
 
             println!(
                 "wrote {} rows → {} (committed as version {})",
@@ -83,13 +138,8 @@ fn main() -> anyhow::Result<()> {
                 version
             );
         }
-        Commands::Snapshot { table, version } => {
-            let ver = match version {
-                Some(v) => v,
-                None => snapshot::latest_version(&table)?
-                    .context("table has no committed versions yet")?,
-            };
-
+        Commands::Snapshot { table, version, timestamp } => {
+            let ver = resolve_version(&table, version, timestamp.as_deref())?;
             let snap = snapshot::read(&table, ver)?;
 
             println!("snapshot at version {}", snap.version);
@@ -97,6 +147,10 @@ fn main() -> anyhow::Result<()> {
             for f in &snap.files {
                 println!("  {} ({} rows, {} bytes)", f.path, f.row_count, f.size);
             }
+        }
+        Commands::Sql { table, version, timestamp, query, explain } => {
+            let ver = resolve_version(&table, version, timestamp.as_deref())?;
+            query::sql(&table, Some(ver), &query, explain).await?;
         }
     }
     Ok(())

@@ -1,6 +1,6 @@
 # Lakehouse — Current Progress
 
-_Last updated: 2026-04-17_ (W1-5 complete)
+_Last updated: 2026-05-19_ (W2-4 complete)
 
 ---
 
@@ -36,6 +36,19 @@ _Last updated: 2026-04-17_ (W1-5 complete)
 - Two unit tests: (1) log file exists at correct path and every line parses as JSON with an `"add"` key; (2) metadata fields (`path`, `size`, `rowCount`) match what was committed
 - All 5 tests pass
 
+### W1-6: First query path (DataFusion reads snapshot files) ✅
+
+- Added `datafusion = "46"` and `tokio = "1"` (rt-multi-thread + macros) to `Cargo.toml`
+- `query.rs`: `sql(table_dir, version, query, explain) -> anyhow::Result<()>` (async)
+  - Reconstructs snapshot via `snapshot::read`
+  - Builds a `ListingTable` from `ListingTableConfig::new_with_multi_paths` — handles 1 or N Parquet files from the snapshot, schema inferred automatically
+  - Registers the table as `"t"` in a fresh `SessionContext`
+  - Prepends `EXPLAIN` to the query string when `--explain` is set
+  - Collects `RecordBatch` results and prints via `arrow::util::pretty::print_batches`
+- `main.rs`: converted to `async fn main` with `#[tokio::main]`; added `Sql { --table, --version, --query, --explain }` subcommand
+- 3 new unit tests: single-file COUNT(*) correctness, multi-file COUNT(*) correctness, EXPLAIN path runs without error
+- All 12 tests pass (11 unit + 1 integration)
+
 ### W1-5: Snapshot reconstruction (replay log) ✅
 - `snapshot.rs`: `Snapshot` struct — holds `version: u64` and `files: Vec<AddFile>`; derived by replaying the log, never stored on disk
 - `snapshot.rs`: `read(table_dir, version)` — iterates versions `0..=version`, opens each `_log/<v>.json`, deserializes every NDJSON line as an `Action`, accumulates `AddFile` entries into `files`; errors explicitly on missing log files (no silent skip)
@@ -45,6 +58,32 @@ _Last updated: 2026-04-17_ (W1-5 complete)
 - `main.rs`: new `snapshot --table <path> [--version N]` subcommand — resolves to latest version if `--version` omitted, prints each active file's path, row count, and size
 - 4 unit tests: snapshot collects all AddFiles across versions; snapshot at version 0 excludes later files; `next_version` returns 0 for empty table; `next_version` increments after each commit
 - All 9 tests pass
+
+### W2-1: RemoveFile action + rewrite semantics ✅
+- Added `RemoveFile` struct to `log.rs` — mirrors `AddFile` shape (`path`, `partition_values`); serializes as `{"remove":{...}}`
+- Added `Action::Remove(RemoveFile)` variant to the `Action` enum
+- `snapshot::read()` now handles `Action::Remove`: calls `files.retain(|f| f.path != remove_file.path)` to evict the file from the active set at that version
+- `Action::CommitInfo` arm added as a no-op so the reader is not surprised by the new first-line metadata
+- Tests: `remove_file_evicts_from_snapshot` (write A, remove A, snapshot is empty); `snapshot_before_remove_still_has_file` (snapshot at pre-remove version still sees A)
+
+### W2-2: Atomic-ish commit on local FS ✅
+- `commit()` now writes to `<version>.json.tmp` first, flushes + closes, then calls `fs::rename` to promote to `<version>.json`
+- On POSIX, `rename(2)` is an atomic syscall: readers see either the complete file or nothing — never a partial write
+- `latest_version()` only counts `.json` files with 20-digit stems, so orphaned `.tmp` files from crashed commits are invisible
+- Test: `stale_tmp_file_does_not_affect_previous_version` — writes a garbage `.tmp` for version 1, asserts version 0 is still fully readable
+
+### W2-3: CommitInfo metadata ✅
+- Added `CommitInfo` struct: `timestamp` (RFC 3339 UTC), `operation`, `txn_id: Option<String>`, `app_id: Option<String>`
+- `commit()` prepends a `CommitInfo` action as the first NDJSON line of every log file so readers can extract the timestamp without scanning data actions
+- Added `CommitOptions` struct (with `Default`) forwarded from all call sites
+- CLI `write` subcommand: `--txn-id` and `--app-id` optional flags wired through to `CommitOptions`
+- Test: `commit_info_is_first_line_and_has_timestamp` — asserts first line is `commitInfo`, has a non-null timestamp, operation, txnId, appId
+
+### W2-4: Time travel by version + timestamp ✅
+- `snapshot::read_commit_timestamp(table_dir, version)` — scans a log file for the first `CommitInfo` action and returns its timestamp string
+- `snapshot::version_at_timestamp(table_dir, timestamp)` — parses requested RFC 3339 timestamp, iterates all committed versions, returns the latest version whose `CommitInfo.timestamp ≤ requested`
+- CLI `snapshot` and `sql` subcommands: `--timestamp "2026-03-01T12:00:00Z"` flag added; `resolve_version()` helper enforces mutual exclusivity of `--version` and `--timestamp`
+- Tests: `version_at_timestamp_resolves_correctly` (timestamp between commits → v0); `version_at_timestamp_after_all_commits_gives_latest` (far-future timestamp → latest version)
 
 ---
 
@@ -56,9 +95,11 @@ _Last updated: 2026-04-17_ (W1-5 complete)
 | `src/layout.rs` | Complete | Directory names + log version formatting |
 | `src/writer.rs` | Complete | Append-only Parquet writer with ULID naming + round-trip test |
 | `src/input.rs` | Complete | CSV → Arrow `RecordBatch` loader with schema inference |
-| `src/log.rs` | Complete | `AddFile`, `Action` enum, NDJSON `commit()` + 2 tests |
-| `src/snapshot.rs` | Complete | `read()`, `latest_version()`, `next_version()` + 4 tests |
-| `crates/lakehouse/Cargo.toml` | Active | `arrow`, `parquet`, `ulid`, `serde`, `serde_json` added |
+| `src/log.rs` | Complete | `AddFile`, `RemoveFile`, `CommitInfo`, `CommitOptions`, atomic `commit()` + 4 tests |
+| `src/snapshot.rs` | Complete | `read()` handles Remove+CommitInfo; `version_at_timestamp()`; `latest/next_version()` + 8 tests |
+| `src/query.rs` | Complete | `sql()` async fn via DataFusion `ListingTable` + 3 tests |
+| `src/main.rs` | Complete | `write --txn-id --app-id`; `snapshot/sql --version/--timestamp`; `resolve_version()` |
+| `crates/lakehouse/Cargo.toml` | Complete | `chrono` added for RFC 3339 timestamp handling |
 
 ---
 
@@ -66,9 +107,9 @@ _Last updated: 2026-04-17_ (W1-5 complete)
 
 | Week | Issues | Topics |
 |------|--------|--------|
-| W1 | W1-6 | First DataFusion query | ← next
-| W2 | W2-1 → W2-4 | RemoveFile, atomic commit, CommitInfo, time travel |
-| W3 | W3-1 → W3-3 | Metadata action, schema evolution, checkpointing |
+| W1 | — | Complete ✅ |
+| W2 | W2-1 → W2-4 | RemoveFile, atomic commit, CommitInfo, time travel | ✅
+| W3 | W3-1 → W3-3 | Metadata action, schema evolution, checkpointing | ← next
 | W4 | W4-1 → W4-3 | Redpanda Docker, streaming ingestor, query-while-ingesting demo |
 | W5 | W5-1 → W5-3 | Idempotent batches, exactly-once offsets, fault injection |
 | W6 | W6-1 → W6-3 | TPC-H loader, benchmark runner, EXPLAIN diff tooling |
